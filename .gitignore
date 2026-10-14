@@ -1,0 +1,36 @@
+# Environment and secrets
+.env
+.env*.local
+*.pem
+*.key
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Flutter / Dart
+shopkeeper-app/.dart_tool/
+shopkeeper-app/.flutter-plugins
+shopkeeper-app/.flutter-plugins-dependencies
+shopkeeper-app/.pub-cache/
+shopkeeper-app/.pub/
+shopkeeper-app/build/
+shopkeeper-app/android/.gradle/
+shopkeeper-app/android/local.properties
+
+# PlatformIO / Firmware
+firmware/.pio/
+firmware/.vscode/.browse.c_cpp.db*
+firmware/*.bin
+firmware/*.elf
+
+# Supabase local state
+backend/supabase/.branches/
+backend/supabase/.temp/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.orig
