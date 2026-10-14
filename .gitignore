@@ -3,6 +3,9 @@
 .env*.local
 *.pem
 *.key
+*.keystore
+*.jks
+key.properties
 
 # Node / Vite
 node_modules/
