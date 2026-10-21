@@ -24,9 +24,12 @@ shopkeeper-app/android/local.properties
 
 # PlatformIO / Firmware
 firmware/.pio/
-firmware/.vscode/.browse.c_cpp.db*
+firmware/.vscode/
+firmware/compile_commands.json
 firmware/*.bin
 firmware/*.elf
+firmware/src/scale_config.h
+firmware/scale_config.h
 
 # Supabase local state
 backend/supabase/.branches/

@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shopkeeper_app/models/organization.dart';
 import 'package:shopkeeper_app/screens/auth_screen.dart';
 import 'package:shopkeeper_app/screens/onboarding_screen.dart';
 import 'package:shopkeeper_app/screens/signup_screen.dart';
@@ -249,6 +250,110 @@ void main() {
 
       expect(find.text('Please enter business name'), findsOneWidget);
       expect(find.text('Please enter store branch name'), findsOneWidget);
+    });
+
+    testWidgets('Renders existing organization selector and disambiguates duplicate names',
+        (WidgetTester tester) async {
+      final authService = AuthService();
+      final org1 = Organization(
+        id: '2c17c6c2-83fc-453a-b2e2-8ec289795e3b',
+        name: 'SAHARA',
+        createdAt: DateTime.now(),
+      );
+      final org2 = Organization(
+        id: '432ab506-9999-8888-7777-666655554444',
+        name: 'SAHARA',
+        createdAt: DateTime.now(),
+      );
+      authService.setManagedOrganizationsForTesting([org1, org2]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OnboardingScreen(
+            authService: authService,
+            onStoreJoined: () {},
+          ),
+        ),
+      );
+
+      // Switch to Create New Store tab
+      await tester.tap(find.text('Create New Store'));
+      await tester.pumpAndSettle();
+
+      // Verify mode switcher is visible
+      expect(find.byKey(const Key('mode_existing_org')), findsOneWidget);
+      expect(find.byKey(const Key('mode_new_org')), findsOneWidget);
+
+      // Verify header and dropdown
+      expect(find.text('Add Store to Existing Organization'), findsOneWidget);
+      expect(find.byKey(const Key('org_dropdown')), findsOneWidget);
+
+      // Verify button says "Add Store to Organization"
+      final addBtn = find.widgetWithText(ElevatedButton, 'Add Store to Organization');
+      expect(addBtn, findsOneWidget);
+
+      // Open dropdown to verify items and disambiguation
+      await tester.tap(find.byKey(const Key('org_dropdown')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('SAHARA (2c17c6c2)'), findsWidgets);
+      expect(find.text('SAHARA (432ab506)'), findsWidgets);
+
+      // Close dropdown by tapping outside
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      // Tap submit with empty store branch name
+      await tester.ensureVisible(addBtn);
+      await tester.tap(addBtn);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Please enter store branch name'), findsOneWidget);
+    });
+
+    testWidgets('Toggles between Existing Organization and New Organization modes',
+        (WidgetTester tester) async {
+      final authService = AuthService();
+      final org = Organization(
+        id: '2c17c6c2-83fc-453a-b2e2-8ec289795e3b',
+        name: 'SAHARA',
+        createdAt: DateTime.now(),
+      );
+      authService.setManagedOrganizationsForTesting([org]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OnboardingScreen(
+            authService: authService,
+            onStoreJoined: () {},
+          ),
+        ),
+      );
+
+      // Switch to Create tab
+      await tester.tap(find.text('Create New Store'));
+      await tester.pumpAndSettle();
+
+      // Initially in Existing Organization mode
+      expect(find.byKey(const Key('org_dropdown')), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Add Store to Organization'), findsOneWidget);
+      expect(find.widgetWithText(TextFormField, 'Organization / Business Name'), findsNothing);
+
+      // Switch to New Organization mode
+      await tester.tap(find.byKey(const Key('mode_new_org')));
+      await tester.pumpAndSettle();
+
+      // Form now shows business name input and provision button
+      expect(find.byKey(const Key('org_dropdown')), findsNothing);
+      expect(find.widgetWithText(TextFormField, 'Organization / Business Name'), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Provision Store & Organization'), findsOneWidget);
+
+      // Switch back to Existing Organization mode
+      await tester.tap(find.byKey(const Key('mode_existing_org')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('org_dropdown')), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Add Store to Organization'), findsOneWidget);
     });
   });
 }

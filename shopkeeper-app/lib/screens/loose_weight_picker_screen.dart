@@ -3,6 +3,7 @@
 // ==============================================================================
 
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/product.dart';
 import '../models/shop.dart';
 import '../models/shop_inventory_item.dart';
@@ -15,12 +16,16 @@ class LooseWeightPickerScreen extends StatefulWidget {
   final Shop shop;
   final CartService cartService;
   final Product? initialProduct;
+  final InventoryService? inventoryService;
+  final WeightTicketService? ticketService;
 
   const LooseWeightPickerScreen({
     super.key,
     required this.shop,
     required this.cartService,
     this.initialProduct,
+    this.inventoryService,
+    this.ticketService,
   });
 
   @override
@@ -28,8 +33,8 @@ class LooseWeightPickerScreen extends StatefulWidget {
 }
 
 class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
-  final _inventoryService = InventoryService();
-  final _ticketService = WeightTicketService();
+  late final InventoryService _inventoryService;
+  late final WeightTicketService _ticketService;
 
   List<ShopInventoryItem> _looseItems = [];
   ShopInventoryItem? _selectedItem;
@@ -39,10 +44,64 @@ class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
   String? _errorMessage;
   String _searchQuery = '';
 
+  RealtimeChannel? _ticketChannel;
+  String _realtimeStatus = 'Connecting...';
+
   @override
   void initState() {
     super.initState();
+    _inventoryService = widget.inventoryService ?? InventoryService();
+    _ticketService = widget.ticketService ?? WeightTicketService();
     _loadLooseInventory();
+  }
+
+  @override
+  void dispose() {
+    _cancelRealtimeSubscription();
+    super.dispose();
+  }
+
+  void _cancelRealtimeSubscription() {
+    _ticketService.unsubscribe(_ticketChannel);
+    _ticketChannel = null;
+  }
+
+  void _subscribeRealtime(String productId) {
+    _cancelRealtimeSubscription();
+
+    _ticketChannel = _ticketService.subscribeToWeightTickets(
+      shopId: widget.shop.id,
+      productId: productId,
+      onTicketReceived: (newTicket) {
+        if (!mounted) return;
+        setState(() {
+          _latestTicket = newTicket;
+          _errorMessage = null;
+        });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Scale update received: ${newTicket.weightKg.toStringAsFixed(3)} kg',
+            ),
+            backgroundColor: const Color(0xFF16A34A),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      },
+      onStatusChange: (status) {
+        if (!mounted) return;
+        setState(() {
+          _realtimeStatus = status;
+        });
+      },
+      onError: (err) {
+        if (!mounted) return;
+        setState(() {
+          _realtimeStatus = 'Disconnected';
+        });
+      },
+    );
   }
 
   Future<void> _loadLooseInventory() async {
@@ -55,6 +114,7 @@ class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
       final items = await _inventoryService.fetchShopInventory(widget.shop.id);
       final loose = items.where((i) => i.product != null && i.product!.isLoose).toList();
 
+      if (!mounted) return;
       setState(() {
         _looseItems = loose;
         _isLoadingInventory = false;
@@ -71,6 +131,7 @@ class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
         }
       });
     } catch (err) {
+      if (!mounted) return;
       setState(() {
         _isLoadingInventory = false;
         _errorMessage = 'Failed to load loose inventory: $err';
@@ -79,6 +140,9 @@ class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
   }
 
   Future<void> _fetchTicketForSelectedItem(ShopInventoryItem item) async {
+    // Start or refresh real-time listener for the active loose product
+    _subscribeRealtime(item.productId);
+
     setState(() {
       _isLoadingTicket = true;
       _errorMessage = null;
@@ -90,11 +154,13 @@ class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
         productId: item.productId,
       );
 
+      if (!mounted) return;
       setState(() {
         _latestTicket = ticket;
         _isLoadingTicket = false;
       });
     } catch (err) {
+      if (!mounted) return;
       setState(() {
         _latestTicket = null;
         _isLoadingTicket = false;
@@ -167,6 +233,51 @@ class _LooseWeightPickerScreenState extends State<LooseWeightPickerScreen> {
         foregroundColor: const Color(0xFF0F172A),
         elevation: 0,
         actions: [
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _realtimeStatus == 'Live Scale'
+                    ? const Color(0xFFDCFCE7)
+                    : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _realtimeStatus == 'Live Scale'
+                      ? const Color(0xFF86EFAC)
+                      : const Color(0xFFCBD5E1),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _realtimeStatus == 'Live Scale'
+                          ? const Color(0xFF16A34A)
+                          : (_realtimeStatus == 'Error' || _realtimeStatus == 'Disconnected'
+                              ? const Color(0xFFEF4444)
+                              : const Color(0xFF94A3B8)),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    _realtimeStatus,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _realtimeStatus == 'Live Scale'
+                          ? const Color(0xFF15803D)
+                          : const Color(0xFF475569),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh Scale Ticket',

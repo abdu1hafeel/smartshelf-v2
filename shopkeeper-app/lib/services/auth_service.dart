@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
+import '../models/organization.dart';
 import '../models/shop.dart';
 
 class SignUpResult {
@@ -27,6 +28,7 @@ class AuthService extends ChangeNotifier {
   User? _currentUser;
   String? _userFullName;
   List<Shop> _authorizedShops = [];
+  List<Organization> _managedOrganizations = [];
   Shop? _selectedShop;
   bool _isLoading = true;
   String? _errorMessage;
@@ -37,6 +39,9 @@ class AuthService extends ChangeNotifier {
       _initAuth(c);
     } else {
       _isLoading = false;
+      if (SupabaseConfig.initializationError != null) {
+        _errorMessage = SupabaseConfig.initializationError;
+      }
     }
   }
 
@@ -52,6 +57,7 @@ class AuthService extends ChangeNotifier {
   bool get isAuthenticated => _currentUser != null;
   String? get userFullName => _userFullName;
   List<Shop> get authorizedShops => _authorizedShops;
+  List<Organization> get managedOrganizations => _managedOrganizations;
   Shop? get selectedShop => _selectedShop;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -70,6 +76,7 @@ class AuthService extends ChangeNotifier {
       } else {
         _userFullName = null;
         _authorizedShops = [];
+        _managedOrganizations = [];
         _selectedShop = null;
         _isLoading = false;
         notifyListeners();
@@ -316,6 +323,65 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Creates a new shop under an existing organization that the user manages as ORG_ADMIN
+  Future<Map<String, dynamic>?> createShopUnderOrganization({
+    required String organizationId,
+    required String shopName,
+    String? location,
+    String currency = 'INR',
+  }) async {
+    final client = _client;
+    final user = _currentUser;
+    if (client == null) {
+      _errorMessage = 'Supabase client is not initialized.';
+      _isLoading = false;
+      notifyListeners();
+      return null;
+    }
+
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final res = await client.rpc(
+        'create_shop',
+        params: {
+          'p_organization_id': organizationId,
+          'p_name': shopName.trim(),
+          'p_location': location != null && location.trim().isNotEmpty ? location.trim() : null,
+          'p_currency': currency.trim(),
+        },
+      ).timeout(_networkTimeout);
+
+      final data = Map<String, dynamic>.from(res as Map);
+      final shopId = data['shop_id'] as String?;
+
+      if (shopId != null && user != null) {
+        try {
+          await client.rpc(
+            'assign_shop_membership',
+            params: {
+              'p_shop_id': shopId,
+              'p_user_id': user.id,
+              'p_role': 'SHOP_ADMIN',
+            },
+          ).timeout(_networkTimeout);
+        } catch (assignErr) {
+          debugPrint('Notice: assign_shop_membership: $assignErr');
+        }
+      }
+
+      await loadUserTenantContext();
+      return data;
+    } catch (err) {
+      _errorMessage = _cleanErrorMessage(err);
+      _isLoading = false;
+      notifyListeners();
+      return null;
+    }
+  }
+
   /// Signs out active session
   Future<void> signOut() async {
     final client = _client;
@@ -329,6 +395,7 @@ class AuthService extends ChangeNotifier {
     _currentUser = null;
     _userFullName = null;
     _authorizedShops = [];
+    _managedOrganizations = [];
     _selectedShop = null;
     _isLoading = false;
     _errorMessage = null;
@@ -385,14 +452,36 @@ class AuthService extends ChangeNotifier {
       // 3. Also check if user is an ORG_ADMIN in any organization
       final orgMemRows = await client
           .from('organization_memberships')
-          .select('organization_id, role, status')
+          .select('organization_id, role, status, organizations(*)')
           .eq('user_id', user.id)
           .eq('role', 'ORG_ADMIN')
           .eq('status', 'ACTIVE')
           .timeout(_networkTimeout);
 
+      final List<Organization> managedOrgs = [];
+      final Set<String> loadedOrgIds = {};
+
       for (final orgRow in orgMemRows) {
         final orgId = orgRow['organization_id'] as String?;
+        if (orgRow['organizations'] != null && orgRow['organizations'] is Map<String, dynamic>) {
+          final org = Organization.fromJson(orgRow['organizations'] as Map<String, dynamic>);
+          if (!loadedOrgIds.contains(org.id)) {
+            managedOrgs.add(org);
+            loadedOrgIds.add(org.id);
+          }
+        } else if (orgId != null && !loadedOrgIds.contains(orgId)) {
+          final orgData = await client
+              .from('organizations')
+              .select('*')
+              .eq('id', orgId)
+              .maybeSingle()
+              .timeout(_networkTimeout);
+          if (orgData != null) {
+            managedOrgs.add(Organization.fromJson(orgData));
+            loadedOrgIds.add(orgId);
+          }
+        }
+
         if (orgId != null) {
           final orgShops = await client
               .from('shops')
@@ -408,6 +497,8 @@ class AuthService extends ChangeNotifier {
           }
         }
       }
+
+      _managedOrganizations = managedOrgs;
 
       _authorizedShops = shops;
 
@@ -434,6 +525,12 @@ class AuthService extends ChangeNotifier {
       _selectedShop = shop;
       notifyListeners();
     }
+  }
+
+  @visibleForTesting
+  void setManagedOrganizationsForTesting(List<Organization> orgs) {
+    _managedOrganizations = orgs;
+    notifyListeners();
   }
 
   String _cleanErrorMessage(dynamic err) {

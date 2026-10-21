@@ -23,7 +23,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
-  const { activeOrg, isOrgAdmin, isShopAdmin, signOut, profile, user } = useAuth();
+  const { activeOrg, organizations, isOrgAdmin, isShopAdmin, signOut, profile, user } = useAuth();
 
   const navItems: { id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -58,8 +58,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
           <Store className="w-3.5 h-3.5 text-indigo-400" />
           <span className="font-medium uppercase tracking-wider text-[10px]">Active Tenant</span>
         </div>
-        <p className="text-sm font-semibold text-white truncate">
-          {activeOrg ? activeOrg.name : 'No Organization Selected'}
+        <p
+          className="text-sm font-semibold text-white truncate"
+          title={activeOrg ? `${activeOrg.name} (${activeOrg.id})` : undefined}
+        >
+          {activeOrg
+            ? organizations.filter((o) => o.name.toLowerCase() === activeOrg.name.toLowerCase()).length > 1
+              ? `${activeOrg.name} (${activeOrg.id.slice(0, 8)})`
+              : activeOrg.name
+            : 'No Organization Selected'}
         </p>
       </div>
 

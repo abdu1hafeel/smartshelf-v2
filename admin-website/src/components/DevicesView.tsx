@@ -305,9 +305,23 @@ export const DevicesView: React.FC = () => {
           <div className="p-12 text-center">
             <Scale className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-sm font-semibold text-slate-700">No scale devices enrolled</p>
-            <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+            <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto mb-4">
               Provision and enroll an ESP32 scale device to start receiving verified weight tickets.
             </p>
+            {isShopAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  setSuccessMsg(null);
+                  setShowEnrollModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-xs shadow-indigo-600/30 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Enroll Scale Device
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

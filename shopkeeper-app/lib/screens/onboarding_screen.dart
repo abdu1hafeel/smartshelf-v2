@@ -3,7 +3,10 @@
 // ==============================================================================
 
 import 'package:flutter/material.dart';
+import '../models/organization.dart';
 import '../services/auth_service.dart';
+
+enum CreateStoreMode { existingOrg, newOrg }
 
 class OnboardingScreen extends StatefulWidget {
   final AuthService authService;
@@ -29,7 +32,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _isJoining = false;
   String? _joinError;
 
-  // Option B: Create New Shop
+  // Option B: Create Store (Existing vs New Organization)
+  CreateStoreMode _createMode = CreateStoreMode.existingOrg;
+  String? _selectedExistingOrgId;
   final _orgNameController = TextEditingController();
   final _shopNameController = TextEditingController();
   final _locationController = TextEditingController();
@@ -42,6 +47,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    if (widget.authService.managedOrganizations.isNotEmpty) {
+      _selectedExistingOrgId = widget.authService.managedOrganizations.first.id;
+      _createMode = CreateStoreMode.existingOrg;
+    } else {
+      _createMode = CreateStoreMode.newOrg;
+    }
   }
 
   @override
@@ -87,25 +98,46 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (!_createFormKey.currentState!.validate()) return;
     FocusScope.of(context).unfocus();
 
+    final managedOrgs = widget.authService.managedOrganizations;
+    final isExistingMode = _createMode == CreateStoreMode.existingOrg && managedOrgs.isNotEmpty;
+
+    if (isExistingMode && (_selectedExistingOrgId == null || _selectedExistingOrgId!.isEmpty)) {
+      setState(() {
+        _createError = 'Please select an organization';
+      });
+      return;
+    }
+
     setState(() {
       _isCreating = true;
       _createError = null;
     });
 
-    final res = await widget.authService.createOrganizationAndShop(
-      orgName: _orgNameController.text.trim(),
-      shopName: _shopNameController.text.trim(),
-      location: _locationController.text.trim(),
-      currency: _selectedCurrency,
-    );
+    Map<String, dynamic>? res;
+    if (isExistingMode) {
+      res = await widget.authService.createShopUnderOrganization(
+        organizationId: _selectedExistingOrgId!,
+        shopName: _shopNameController.text.trim(),
+        location: _locationController.text.trim(),
+        currency: _selectedCurrency,
+      );
+    } else {
+      res = await widget.authService.createOrganizationAndShop(
+        orgName: _orgNameController.text.trim(),
+        shopName: _shopNameController.text.trim(),
+        location: _locationController.text.trim(),
+        currency: _selectedCurrency,
+      );
+    }
 
     if (!mounted) return;
     setState(() => _isCreating = false);
 
     if (res != null) {
+      final storeName = res['name'] ?? res['shop_name'] ?? _shopNameController.text.trim();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Store "${res['shop_name']}" created successfully!'),
+          content: Text('Store "$storeName" created successfully!'),
           backgroundColor: const Color(0xFF10B981),
         ),
       );
@@ -120,6 +152,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   Widget build(BuildContext context) {
     final userEmail = widget.authService.currentUser?.email ?? 'Shopkeeper';
+    final managedOrgs = widget.authService.managedOrganizations;
+    if (managedOrgs.isNotEmpty &&
+        (_selectedExistingOrgId == null ||
+            !managedOrgs.any((o) => o.id == _selectedExistingOrgId))) {
+      _selectedExistingOrgId = managedOrgs.first.id;
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -272,12 +310,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       TextFormField(
                         controller: _inviteCodeController,
                         textCapitalization: TextCapitalization.characters,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'Invitation Code',
                           hintText: 'e.g. SH-1AEC-A562',
-                          prefixIcon: const Icon(Icons.tag_rounded, size: 20),
+                          prefixIcon: Icon(Icons.tag_rounded, size: 20),
                           filled: true,
-                          fillColor: const Color(0xFFF8FAFC),
+                          fillColor: Color(0xFFF8FAFC),
                         ),
                         validator: (val) {
                           if (val == null || val.trim().isEmpty) {
@@ -327,9 +365,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // Option B: Create New Store
+  // Option B: Create Store (Existing or New Organization)
   // ---------------------------------------------------------------------------
   Widget _buildCreateTab() {
+    final managedOrgs = widget.authService.managedOrganizations;
+    final isExistingMode = _createMode == CreateStoreMode.existingOrg && managedOrgs.isNotEmpty;
+
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
@@ -338,39 +379,153 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (managedOrgs.isNotEmpty) ...[
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE2E8F0),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.all(4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          key: const Key('mode_existing_org'),
+                          onTap: () {
+                            setState(() {
+                              _createMode = CreateStoreMode.existingOrg;
+                              _createError = null;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: _createMode == CreateStoreMode.existingOrg
+                                  ? Colors.white
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: _createMode == CreateStoreMode.existingOrg
+                                  ? [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.05),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              'Existing Organization',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _createMode == CreateStoreMode.existingOrg
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: _createMode == CreateStoreMode.existingOrg
+                                    ? const Color(0xFF0F172A)
+                                    : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: InkWell(
+                          key: const Key('mode_new_org'),
+                          onTap: () {
+                            setState(() {
+                              _createMode = CreateStoreMode.newOrg;
+                              _createError = null;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: _createMode == CreateStoreMode.newOrg
+                                  ? Colors.white
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: _createMode == CreateStoreMode.newOrg
+                                  ? [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.05),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              'New Organization',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _createMode == CreateStoreMode.newOrg
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: _createMode == CreateStoreMode.newOrg
+                                    ? const Color(0xFF0F172A)
+                                    : const Color(0xFF64748B),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF0FDF4),
+                  color: isExistingMode ? const Color(0xFFEFF6FF) : const Color(0xFFF0FDF4),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Row(
                   children: [
                     Container(
                       padding: const EdgeInsets.all(10),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF16A34A),
+                      decoration: BoxDecoration(
+                        color: isExistingMode ? const Color(0xFF2563EB) : const Color(0xFF16A34A),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 22),
+                      child: Icon(
+                        isExistingMode
+                            ? Icons.domain_add_rounded
+                            : Icons.storefront_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
                     ),
                     const SizedBox(width: 14),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Register a New Retail Business',
+                            isExistingMode
+                                ? 'Add Store to Existing Organization'
+                                : 'Register a New Retail Business',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
-                              color: Color(0xFF14532D),
+                              color: isExistingMode ? const Color(0xFF1E3A8A) : const Color(0xFF14532D),
                             ),
                           ),
-                          SizedBox(height: 2),
+                          const SizedBox(height: 2),
                           Text(
-                            'Creates an organization and primary store with full administrator permissions.',
-                            style: TextStyle(fontSize: 11.5, color: Color(0xFF15803D)),
+                            isExistingMode
+                                ? 'Creates a new store branch under your authorized organization.'
+                                : 'Creates an organization and primary store with full administrator permissions.',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: isExistingMode ? const Color(0xFF1D4ED8) : const Color(0xFF15803D),
+                            ),
                           ),
                         ],
                       ),
@@ -423,37 +578,80 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      TextFormField(
-                        controller: _orgNameController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: InputDecoration(
-                          labelText: 'Organization / Business Name',
-                          hintText: 'e.g. Apex Retail Enterprises',
-                          prefixIcon: const Icon(Icons.business_rounded, size: 20),
-                          filled: true,
-                          fillColor: const Color(0xFFF8FAFC),
+                      if (isExistingMode) ...[
+                        Builder(
+                          builder: (context) {
+                            final nameCounts = <String, int>{};
+                            for (final org in managedOrgs) {
+                              nameCounts[org.name] = (nameCounts[org.name] ?? 0) + 1;
+                            }
+
+                            return DropdownButtonFormField<String>(
+                              key: const Key('org_dropdown'),
+                              isExpanded: true,
+                              initialValue: _selectedExistingOrgId,
+                              decoration: const InputDecoration(
+                                labelText: 'Target Organization',
+                                hintText: 'Select an organization',
+                                prefixIcon: Icon(Icons.business_rounded, size: 20),
+                                filled: true,
+                                fillColor: Color(0xFFF8FAFC),
+                              ),
+                              items: managedOrgs.map((Organization org) {
+                                final isDup = (nameCounts[org.name] ?? 0) > 1;
+                                return DropdownMenuItem<String>(
+                                  value: org.id,
+                                  child: Text(
+                                    org.displayName(isDuplicate: isDup),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (val) {
+                                setState(() => _selectedExistingOrgId = val);
+                              },
+                              validator: (val) {
+                                if (val == null || val.isEmpty) {
+                                  return 'Please select an organization';
+                                }
+                                return null;
+                              },
+                            );
+                          },
                         ),
-                        validator: (val) {
-                          if (val == null || val.trim().isEmpty) {
-                            return 'Please enter business name';
-                          }
-                          if (val.trim().length < 2) {
-                            return 'Must be at least 2 characters';
-                          }
-                          return null;
-                        },
-                      ),
+                      ] else ...[
+                        TextFormField(
+                          controller: _orgNameController,
+                          textCapitalization: TextCapitalization.words,
+                          decoration: const InputDecoration(
+                            labelText: 'Organization / Business Name',
+                            hintText: 'e.g. Apex Retail Enterprises',
+                            prefixIcon: Icon(Icons.business_rounded, size: 20),
+                            filled: true,
+                            fillColor: Color(0xFFF8FAFC),
+                          ),
+                          validator: (val) {
+                            if (val == null || val.trim().isEmpty) {
+                              return 'Please enter business name';
+                            }
+                            if (val.trim().length < 2) {
+                              return 'Must be at least 2 characters';
+                            }
+                            return null;
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 14),
 
                       TextFormField(
                         controller: _shopNameController,
                         textCapitalization: TextCapitalization.words,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'Store Branch Name',
                           hintText: 'e.g. Downtown Flagship',
-                          prefixIcon: const Icon(Icons.store_rounded, size: 20),
+                          prefixIcon: Icon(Icons.store_rounded, size: 20),
                           filled: true,
-                          fillColor: const Color(0xFFF8FAFC),
+                          fillColor: Color(0xFFF8FAFC),
                         ),
                         validator: (val) {
                           if (val == null || val.trim().isEmpty) {
@@ -470,23 +668,23 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       TextFormField(
                         controller: _locationController,
                         textCapitalization: TextCapitalization.words,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'Location / City (Optional)',
                           hintText: 'e.g. MG Road, Bangalore',
-                          prefixIcon: const Icon(Icons.location_on_outlined, size: 20),
+                          prefixIcon: Icon(Icons.location_on_outlined, size: 20),
                           filled: true,
-                          fillColor: const Color(0xFFF8FAFC),
+                          fillColor: Color(0xFFF8FAFC),
                         ),
                       ),
                       const SizedBox(height: 14),
 
                       DropdownButtonFormField<String>(
                         initialValue: _selectedCurrency,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'Store Currency',
-                          prefixIcon: const Icon(Icons.currency_exchange_rounded, size: 20),
+                          prefixIcon: Icon(Icons.currency_exchange_rounded, size: 20),
                           filled: true,
-                          fillColor: const Color(0xFFF8FAFC),
+                          fillColor: Color(0xFFF8FAFC),
                         ),
                         items: const [
                           DropdownMenuItem(value: 'INR', child: Text('INR (₹)')),
@@ -503,7 +701,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ElevatedButton(
                         onPressed: _isCreating ? null : _handleCreateStore,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF16A34A),
+                          backgroundColor: isExistingMode
+                              ? const Color(0xFF2563EB)
+                              : const Color(0xFF16A34A),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
@@ -520,9 +720,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                                   valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                                 ),
                               )
-                            : const Text(
-                                'Provision Store & Organization',
-                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            : Text(
+                                isExistingMode
+                                    ? 'Add Store to Organization'
+                                    : 'Provision Store & Organization',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                               ),
                       ),
                     ],

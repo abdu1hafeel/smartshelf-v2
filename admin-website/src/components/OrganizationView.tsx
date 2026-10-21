@@ -243,11 +243,15 @@ export const OrganizationView: React.FC = () => {
               aria-label="Switch organization"
               className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700"
             >
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
+              {organizations.map((org) => {
+                const isDuplicate = organizations.filter((o) => o.name.toLowerCase() === org.name.toLowerCase()).length > 1;
+                const label = isDuplicate ? `${org.name} (${org.id.slice(0, 8)})` : org.name;
+                return (
+                  <option key={org.id} value={org.id}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           )}
 

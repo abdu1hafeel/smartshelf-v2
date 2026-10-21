@@ -2,10 +2,12 @@
 // SmartShelf V2 - Authentication & Tenant Context
 // ==============================================================================
 
-import React, { createContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useEffect, useState, useCallback, useRef } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { Organization, Shop, Profile, OrganizationMembership, ShopMembership } from '../types/database';
+
+const STORAGE_KEY_ORG = 'smartshelf_active_org_id';
 
 interface AuthContextType {
   user: User | null;
@@ -42,7 +44,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [shopMembership, setShopMembership] = useState<ShopMembership | null>(null);
   const [loading, setLoading] = useState(isSupabaseConfigured);
 
+  // Counter to prevent stale async tenant loads from overwriting newer selections
+  const loadRequestIdRef = useRef(0);
+
   const fetchTenantData = useCallback(async (currentUserId: string, preferredOrgId?: string, preferredShopId?: string) => {
+    const requestId = ++loadRequestIdRef.current;
     try {
       // 1. Fetch user profile
       const { data: prof } = await supabase
@@ -51,6 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq('id', currentUserId)
         .maybeSingle();
 
+      if (requestId !== loadRequestIdRef.current) return;
       if (prof) setProfile(prof as Profile);
 
       // 2. Fetch organizations accessible to this user
@@ -58,6 +65,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .from('organizations')
         .select('*')
         .order('name');
+
+      if (requestId !== loadRequestIdRef.current) return;
 
       if (orgsErr) {
         console.error('Error fetching organizations:', orgsErr);
@@ -67,10 +76,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const orgList: Organization[] = orgs || [];
       setOrganizations(orgList);
 
-      const targetOrg = orgList.find((o) => o.id === preferredOrgId) || orgList[0] || null;
+      // Restore saved organization ONLY if it exists in accessible orgList
+      const savedOrgId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_ORG) : null;
+      const targetOrg =
+        (preferredOrgId ? orgList.find((o) => o.id === preferredOrgId) : null) ||
+        (savedOrgId ? orgList.find((o) => o.id === savedOrgId) : null) ||
+        orgList[0] ||
+        null;
+
       setActiveOrg(targetOrg);
 
       if (targetOrg) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(STORAGE_KEY_ORG, targetOrg.id);
+        }
+
         // Fetch membership for role resolution
         const { data: mem } = await supabase
           .from('organization_memberships')
@@ -78,6 +98,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('organization_id', targetOrg.id)
           .eq('user_id', currentUserId)
           .maybeSingle();
+
+        if (requestId !== loadRequestIdRef.current) return;
         setOrgMembership(mem as OrganizationMembership | null);
 
         // Fetch shops in active org
@@ -87,6 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('organization_id', targetOrg.id)
           .order('name');
 
+        if (requestId !== loadRequestIdRef.current) return;
         const loadedShops: Shop[] = shopList || [];
         setShops(loadedShops);
 
@@ -100,11 +123,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .eq('shop_id', targetShop.id)
             .eq('user_id', currentUserId)
             .maybeSingle();
+
+          if (requestId !== loadRequestIdRef.current) return;
           setShopMembership(sm as ShopMembership | null);
         } else {
           setShopMembership(null);
         }
       } else {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(STORAGE_KEY_ORG);
+        }
         setShops([]);
         setActiveShop(null);
         setOrgMembership(null);
@@ -124,12 +152,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Handle active organization switch
   const handleSetActiveOrg = useCallback((org: Organization | null) => {
     setActiveOrg(org);
-    if (user && org) {
-      fetchTenantData(user.id, org.id);
+    // Clear stale shops, active shop, and memberships immediately before new tenant data arrives
+    setShops([]);
+    setActiveShop(null);
+    setOrgMembership(null);
+    setShopMembership(null);
+
+    if (org) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY_ORG, org.id);
+      }
+      if (user) {
+        fetchTenantData(user.id, org.id);
+      }
     } else {
-      setShops([]);
-      setActiveShop(null);
-      setOrgMembership(null);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEY_ORG);
+      }
     }
   }, [user, fetchTenantData]);
 
@@ -171,6 +210,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (newSession?.user) {
         fetchTenantData(newSession.user.id);
       } else {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(STORAGE_KEY_ORG);
+        }
         setProfile(null);
         setOrganizations([]);
         setActiveOrg(null);
@@ -205,6 +247,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEY_ORG);
+    }
     await supabase.auth.signOut();
   };
 
